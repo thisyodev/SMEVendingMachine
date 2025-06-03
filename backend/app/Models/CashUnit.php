@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class CashUnit extends Model
 {
-    protected $fillable = ['value', 'quantity'];
+    protected $fillable = ['denomination', 'value', 'quantity'];
 
     public static function addUnit($value, $count = 1)
     {
