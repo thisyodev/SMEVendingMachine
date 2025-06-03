@@ -13,13 +13,17 @@ class CashUnitSeeder extends Seeder
      */
     public function run(): void
     {
-        $units = [1, 5, 10, 20, 50, 100, 500, 1000];
+        DB::table('cash_units')->truncate();
 
-        foreach ($units as $denomination) {
-            CashUnit::create([
-                'denomination' => $denomination,
-                'quantity' => 10 // mock เริ่มต้น
-            ]);
-        }
+        DB::table('cash_units')->insert([
+            ['denomination' => 1, 'quantity' => 100],
+            ['denomination' => 5, 'quantity' => 100],
+            ['denomination' => 10, 'quantity' => 100],
+            ['denomination' => 20, 'quantity' => 100],
+            ['denomination' => 50, 'quantity' => 100],
+            ['denomination' => 100, 'quantity' => 100],
+            ['denomination' => 500, 'quantity' => 50],
+            ['denomination' => 1000, 'quantity' => 50],
+        ]);
     }
 }

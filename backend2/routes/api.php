@@ -24,6 +24,7 @@ Route::middleware([StartSession::class])->group(function () {
     Route::get('/change-options', [VendingController::class, 'changeOptions']);
     Route::post('/insert-coin', [VendingController::class, 'insertCoin']);
     Route::post('/purchase', [VendingController::class, 'purchase']);
+    Route::get('/history', [VendingController::class, 'history']);
 });
 
 // Authentication route (ใช้ sanctum middleware)

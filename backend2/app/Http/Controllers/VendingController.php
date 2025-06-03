@@ -3,21 +3,19 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use App\Models\Product;
 use App\Models\CashUnit;
-use App\Models\Transaction;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Session;
-use Illuminate\Support\Facades\Log;
+
 class VendingController extends Controller
 {
     // POST /insert-coin
-    public function insertCoin(Request $request) {
+    public function insertCoin(Request $request)
+    {
         $denomination = $request->input('denomination');
         $quantity = $request->input('quantity', 1);
-
-        // รับเฉพาะที่ระบบรองรับ
         $validDenominations = [1, 5, 10, 20, 50, 100, 500, 1000];
+
         if (!in_array($denomination, $validDenominations)) {
             return response()->json(['message' => 'ชนิดเงินไม่รองรับ'], 400);
         }
@@ -26,7 +24,7 @@ class VendingController extends Controller
         $currentBalance += $denomination * $quantity;
         session(['current_balance' => $currentBalance]);
 
-        // บันทึกเหรียญเข้า cash_units
+        // บันทึกเหรียญเข้าเครื่อง
         $cashUnit = CashUnit::firstOrCreate(['denomination' => $denomination]);
         $cashUnit->increment('quantity', $quantity);
 
@@ -36,6 +34,7 @@ class VendingController extends Controller
         ]);
     }
 
+    // POST /purchase
     public function purchase(Request $request)
     {
         $productId = $request->input('product_id');
@@ -54,49 +53,75 @@ class VendingController extends Controller
             return response()->json(['message' => 'ยอดเงินไม่เพียงพอ'], 400);
         }
 
-        $changeAmount = $currentBalance - $product->price;
-        $changeBreakdown = $this->calculateChange($changeAmount);
-        if ($changeAmount > 0 && $changeBreakdown === false) {
-            return response()->json(['message' => 'เครื่องไม่มีเงินทอนเพียงพอ'], 400);
-        }
+        $changeDetails = [];
+        DB::beginTransaction();
+        try {
+            $newBalance = $currentBalance - $product->price;
+            $change = $this->calculateChange($newBalance);
 
-        DB::transaction(function () use ($product, $changeAmount, $changeBreakdown) {
-            // ลด stock
-            $product->stock -= 1;
-            $product->save();
+            if ($change === false) {
+                DB::rollBack();
+                return response()->json(['message' => 'ไม่สามารถทอนเงินได้'], 400);
+            }
 
-            // เพิ่มเงินเข้าเครื่อง
-            foreach (CashUnit::all() as $unit) {
-                if (session('current_balance') >= $unit->denomination) {
-                    $unit->quantity += intdiv(session('current_balance'), $unit->denomination);
+            // ทอนเงิน: ลดจำนวนเหรียญที่ใช้ทอน
+            foreach ($change as $denom => $qty) {
+                $cashUnit = CashUnit::where('denomination', $denom)->first();
+                if ($cashUnit) {
+                    $cashUnit->decrement('quantity', $qty);
+                    $changeDetails[] = [
+                        'denomination' => $denom,
+                        'quantity' => $qty
+                    ];
+                }
+            }
+
+            session(['current_balance' => 0]); // reset balance หลังทอนเงิน
+
+            // เพิ่มเงินเข้าเครื่องตามราคาสินค้า
+            $remaining = $product->price;
+            $denominations = CashUnit::orderByDesc('denomination')->get();
+            foreach ($denominations as $unit) {
+                $count = intdiv($remaining, $unit->denomination);
+                if ($count > 0) {
+                    $unit->quantity += $count;
                     $unit->save();
-                    session(['current_balance' => session('current_balance') % $unit->denomination]);
+                    $remaining %= $unit->denomination;
                 }
             }
 
-            // หักเงินทอนออกจากเครื่อง
-            if ($changeBreakdown) {
-                foreach ($changeBreakdown as $denomination => $qty) {
-                    CashUnit::where('denomination', $denomination)->decrement('quantity', $qty);
-                }
-            }
+            $product->decrement('stock');
 
-            session(['current_balance' => 0]); // reset
-        });
+            $history = session('purchase_history', []);
+            $history[] = [
+                'product_id' => $product->id,
+                'name' => $product->name,
+                'price' => $product->price,
+                'balance_after' => 0,
+                'time' => now()->toDateTimeString()
+            ];
+            session(['purchase_history' => $history]);
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'เกิดข้อผิดพลาดขณะซื้อสินค้า'], 500);
+        }
 
         return response()->json([
             'message' => 'ซื้อสินค้าเรียบร้อย',
-            'current_balance' => 0,
+            'current_balance' => session('current_balance'),
             'product' => [
                 'id' => $product->id,
                 'name' => $product->name,
                 'total_paid' => $product->price,
             ],
-            'change' => $changeAmount,
-            'change_breakdown' => $changeBreakdown ?? [],
+            'change' => $newBalance,
+            'change_details' => $changeDetails,
         ]);
     }
 
+    // GET /status
     public function status()
     {
         $totalCash = CashUnit::sum(DB::raw('denomination * quantity'));
@@ -112,12 +137,16 @@ class VendingController extends Controller
     // GET /change-options
     public function changeOptions()
     {
-        $inserted = session('current_balance', 0); // เปลี่ยนจาก inserted เป็น current_balance
+        $balance = session('current_balance', 0);
+        $change = $this->calculateChange($balance);
+
         return response()->json([
-            'inserted' => $inserted,
-            'available_change' => $this->calculateChange($inserted),
+            'inserted' => $balance,
+            'available_change' => $change !== false ? $change : [],
+            'change_possible' => $change !== false,
         ]);
     }
+
     private function calculateChange($amount)
     {
         $denominations = CashUnit::orderByDesc('denomination')->get();
@@ -137,8 +166,11 @@ class VendingController extends Controller
         return $amount === 0 ? $change : false;
     }
 
-    protected function getCurrentBalance()
+    // GET /history
+    public function history()
     {
-        return Session::get('current_balance', 0);
+        return response()->json([
+            'history' => session('purchase_history', [])
+        ]);
     }
 }
