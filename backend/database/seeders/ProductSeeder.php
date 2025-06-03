@@ -13,7 +13,9 @@ class ProductSeeder extends Seeder
      */
     public function run(): void
     {
+        DB::statement('SET FOREIGN_KEY_CHECKS=0;'); // ปิดการตรวจ FK ชั่วคราว
         DB::table('products')->truncate();
+        DB::statement('SET FOREIGN_KEY_CHECKS=1;'); // เปิดกลับ
 
         DB::table('products')->insert([
             ['name' => 'น้ำดื่ม', 'price' => 15, 'stock' => 20],
