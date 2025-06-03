@@ -10,8 +10,9 @@ return new class extends Migration {
         Schema::create('transactions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('product_id')->constrained()->onDelete('cascade');
-            $table->integer('total_paid'); // ต้องไม่ null และไม่มี default ถ้าอยากบังคับ
-            $table->json('change_given')->nullable(); // ใช้ json เพื่อเก็บ array
+            $table->integer('total_paid');
+            $table->integer('change_total')->default(0);
+            $table->json('change_given')->nullable(); // ใช้ JSON field เก็บรายละเอียดการทอนเงิน
             $table->timestamps();
         });
     }

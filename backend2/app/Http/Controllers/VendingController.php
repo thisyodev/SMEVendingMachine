@@ -37,18 +37,22 @@ class VendingController extends Controller
     // POST /purchase
     public function purchase(Request $request)
     {
-        $productId = $request->input('product_id');
+        // ✅ Validate input
+        $validated = $request->validate([
+            'product_id' => 'required|integer|exists:products,id',
+        ]);
+
+        $productId = $validated['product_id'];
         $currentBalance = session('current_balance', 0);
 
         $product = Product::find($productId);
-        if (!$product) {
-            return response()->json(['message' => 'สินค้าไม่พบ'], 404);
-        }
 
+        // ✅ ตรวจสอบว่าสินค้ามีพร้อมขาย
         if ($product->stock <= 0) {
             return response()->json(['message' => 'สินค้าหมด'], 400);
         }
 
+        // ✅ ตรวจสอบยอดเงิน
         if ($currentBalance < $product->price) {
             return response()->json(['message' => 'ยอดเงินไม่เพียงพอ'], 400);
         }
@@ -64,21 +68,19 @@ class VendingController extends Controller
                 return response()->json(['message' => 'ไม่สามารถทอนเงินได้'], 400);
             }
 
-            // ทอนเงิน: ลดจำนวนเหรียญที่ใช้ทอน
+            // ✅ ทอนเงิน: ลดจำนวนเหรียญ/ธนบัตร
             foreach ($change as $denom => $qty) {
                 $cashUnit = CashUnit::where('denomination', $denom)->first();
                 if ($cashUnit) {
                     $cashUnit->decrement('quantity', $qty);
-                    $changeDetails[] = [
-                        'denomination' => $denom,
-                        'quantity' => $qty
-                    ];
+                    $changeDetails[(string)$denom] = $qty; // ✅ ใส่ key เป็น string
                 }
             }
 
-            session(['current_balance' => 0]); // reset balance หลังทอนเงิน
+            // ✅ เคลียร์ balance หลังซื้อ
+            session(['current_balance' => 0]);
 
-            // เพิ่มเงินเข้าเครื่องตามราคาสินค้า
+            // ✅ เติมเงินเข้าตู้ตามราคาสินค้า
             $remaining = $product->price;
             $denominations = CashUnit::orderByDesc('denomination')->get();
             foreach ($denominations as $unit) {
@@ -90,8 +92,10 @@ class VendingController extends Controller
                 }
             }
 
+            // ✅ ลด stock สินค้า
             $product->decrement('stock');
 
+            // ✅ บันทึกประวัติการซื้อ
             $history = session('purchase_history', []);
             $history[] = [
                 'product_id' => $product->id,
