@@ -37,7 +37,6 @@ class VendingController extends Controller
     // POST /purchase
     public function purchase(Request $request)
     {
-        // ✅ Validate input
         $validated = $request->validate([
             'product_id' => 'required|integer|exists:products,id',
         ]);
@@ -47,61 +46,57 @@ class VendingController extends Controller
 
         $product = Product::find($productId);
 
-        // ✅ ตรวจสอบว่าสินค้ามีพร้อมขาย
         if ($product->stock <= 0) {
             return response()->json(['message' => 'สินค้าหมด'], 400);
         }
 
-        // ✅ ตรวจสอบยอดเงิน
         if ($currentBalance < $product->price) {
             return response()->json(['message' => 'ยอดเงินไม่เพียงพอ'], 400);
         }
 
+        $changeAmount = $currentBalance - $product->price;
         $changeDetails = [];
+        $change = $this->calculateChange($changeAmount);
+
+        if ($change === false) {
+            return response()->json(['message' => 'ไม่สามารถทอนเงินได้'], 400);
+        }
+
         DB::beginTransaction();
+
         try {
-            $newBalance = $currentBalance - $product->price;
-            $change = $this->calculateChange($newBalance);
-
-            if ($change === false) {
-                DB::rollBack();
-                return response()->json(['message' => 'ไม่สามารถทอนเงินได้'], 400);
-            }
-
-            // ✅ ทอนเงิน: ลดจำนวนเหรียญ/ธนบัตร
+            // หักเงินทอนออกจากเครื่อง
             foreach ($change as $denom => $qty) {
                 $cashUnit = CashUnit::where('denomination', $denom)->first();
                 if ($cashUnit) {
                     $cashUnit->decrement('quantity', $qty);
-                    $changeDetails[(string)$denom] = $qty; // ✅ ใส่ key เป็น string
+                    $changeDetails[(string)$denom] = $qty;
                 }
             }
 
-            // ✅ เคลียร์ balance หลังซื้อ
-            session(['current_balance' => 0]);
-
-            // ✅ เติมเงินเข้าตู้ตามราคาสินค้า
+            // เติมเงินตามราคาสินค้าเข้าตู้
             $remaining = $product->price;
             $denominations = CashUnit::orderByDesc('denomination')->get();
             foreach ($denominations as $unit) {
                 $count = intdiv($remaining, $unit->denomination);
                 if ($count > 0) {
-                    $unit->quantity += $count;
-                    $unit->save();
+                    $unit->increment('quantity', $count);
                     $remaining %= $unit->denomination;
                 }
             }
 
-            // ✅ ลด stock สินค้า
             $product->decrement('stock');
 
-            // ✅ บันทึกประวัติการซื้อ
+            // อัปเดตยอดคงเหลือหลังหักเฉพาะราคาสินค้า
+            $updatedBalance = $currentBalance - $product->price;
+            session(['current_balance' => $updatedBalance]);
+
             $history = session('purchase_history', []);
             $history[] = [
                 'product_id' => $product->id,
                 'name' => $product->name,
                 'price' => $product->price,
-                'balance_after' => 0,
+                'balance_after' => $updatedBalance,
                 'time' => now()->toDateTimeString()
             ];
             session(['purchase_history' => $history]);
@@ -120,7 +115,7 @@ class VendingController extends Controller
                 'name' => $product->name,
                 'total_paid' => $product->price,
             ],
-            'change' => $newBalance,
+            'change' => $changeAmount,
             'change_details' => $changeDetails,
         ]);
     }
@@ -151,6 +146,7 @@ class VendingController extends Controller
         ]);
     }
 
+    // คำนวณการทอนเงิน
     private function calculateChange($amount)
     {
         $denominations = CashUnit::orderByDesc('denomination')->get();
