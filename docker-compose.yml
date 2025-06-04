@@ -20,14 +20,14 @@ services:
       - ./backend:/var/www/html
     restart: unless-stopped
 
-  frontend:
-    build: ./frontend
+  frontend-sme:
+    build: ./frontend-sme
     ports:
       - "3000:3000"
     stdin_open: true
     tty: true
     volumes:
-      - ./frontend:/app      # bind mount → sync กับ local
+      - ./frontend-sme:/app      # bind mount → sync กับ local
       - /app/node_modules     # ป้องกัน node_modules conflict
     restart: unless-stopped
     environment:
